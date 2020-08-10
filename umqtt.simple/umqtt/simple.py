@@ -8,7 +8,7 @@ class MQTTException(Exception):
 class MQTTClient:
 
     def __init__(self, client_id, server, port=0, user=None, password=None, keepalive=0,
-                 ssl=False, ssl_params={}):
+                 ssl=False, ssl_params={}, max_size_msg = 1440):
         if port == 0:
             port = 8883 if ssl else 1883
         self.client_id = client_id
@@ -26,6 +26,11 @@ class MQTTClient:
         self.lw_msg = None
         self.lw_qos = 0
         self.lw_retain = False
+        self.long_msg_topic = ''
+        self.waiting_long_msg = False
+        self.long_msg_size = 0
+        self.long_msg_bytes_already_received = 0
+        self.max_size_msg = max_size_msg
 
     def _send_str(self, s):
         self.sock.write(struct.pack("!H", len(s)))
@@ -102,7 +107,7 @@ class MQTTClient:
     def disconnect(self):
         self.sock.write(b"\xe0\0")
         self.sock.close()
-
+    
     def disconnectSocket(self):
         self.sock.close()
 
@@ -163,41 +168,71 @@ class MQTTClient:
                     raise MQTTException(resp[3])
                 return
 
+    def process_long_msg(self):
+        self.sock.setblocking(False) # can receive less than <max_size_msg>
+        msg = self.sock.read(self.max_size_msg)
+        if not msg is None:
+            topic = self.long_msg_topic
+            self.long_msg_bytes_already_received += len(msg)
+            
+            if(self.long_msg_bytes_already_received == self.long_msg_size): # turn off waiting for long msg
+                self.waiting_long_msg = False
+                self.long_msg_topic = ''
+                self.long_msg_bytes_already_received = 0
+            
+            self.cb(topic, msg)
+        
     # Wait for a single incoming MQTT message and process it.
     # Subscribed messages are delivered to a callback previously
     # set by .set_callback() method. Other (internal) MQTT
     # messages processed internally.
     def wait_msg(self):
-        res = self.sock.read(1)
-        self.sock.setblocking(True)
-        if res is None:
-            return None
-        if res == b"":
-            raise OSError(-1)
-        if res == b"\xd0":  # PINGRESP
-            sz = self.sock.read(1)[0]
-            assert sz == 0
-            return None
-        op = res[0]
-        if op & 0xf0 != 0x30:
-            return op
-        sz = self._recv_len()
-        topic_len = self.sock.read(2)
-        topic_len = (topic_len[0] << 8) | topic_len[1]
-        topic = self.sock.read(topic_len)
-        sz -= topic_len + 2
-        if op & 6:
-            pid = self.sock.read(2)
-            pid = pid[0] << 8 | pid[1]
-            sz -= 2
-        msg = self.sock.read(sz)
-        self.cb(topic, msg)
-        if op & 6 == 2:
-            pkt = bytearray(b"\x40\x02\0\0")
-            struct.pack_into("!H", pkt, 2, pid)
-            self.sock.write(pkt)
-        elif op & 6 == 4:
-            assert 0
+
+        if not self.waiting_long_msg:
+
+            res = self.sock.read(1)
+            self.sock.setblocking(True)
+            if res is None:
+                return None
+            if res == b"":
+                raise OSError(-1)
+            if res == b"\xd0":  # PINGRESP
+                sz = self.sock.read(1)[0]
+                assert sz == 0
+                return None
+            op = res[0]
+            if op & 0xf0 != 0x30:
+                return op
+            
+            sz = self._recv_len()
+            
+            topic_len = self.sock.read(2)
+            topic_len = (topic_len[0] << 8) | topic_len[1]
+            topic = self.sock.read(topic_len)
+            sz -= topic_len + 2
+            if op & 6:
+                pid = self.sock.read(2)
+                pid = pid[0] << 8 | pid[1]
+                sz -= 2
+            
+            if (sz > self.max_size_msg): # turn on waiting for long msg
+                self.waiting_long_msg = True
+                self.long_msg_topic = topic
+                self.long_msg_size = sz
+                sz = self.max_size_msg
+
+            msg = self.sock.read(sz)
+
+            if op & 6 == 2:
+                pkt = bytearray(b"\x40\x02\0\0")
+                struct.pack_into("!H", pkt, 2, pid)
+                self.sock.write(pkt)
+            elif op & 6 == 4:
+                assert 0
+
+            self.cb(topic, msg)
+        else:
+            self.process_long_msg()
 
     # Checks whether a pending message from server is available.
     # If not, returns immediately with None. Otherwise, does
