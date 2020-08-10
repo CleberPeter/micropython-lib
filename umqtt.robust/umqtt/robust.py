@@ -22,6 +22,7 @@ class MQTTClient(simple.MQTTClient):
             try:
                 return super().connect(False)
             except OSError as e:
+                super().disconnectSocket()
                 self.log(True, e)
                 i += 1
                 self.delay(i)
