@@ -174,7 +174,7 @@ class MQTTClient:
         if not msg is None:
             topic = self.long_msg_topic
             self.long_msg_bytes_already_received += len(msg)
-            
+
             if(self.long_msg_bytes_already_received == self.long_msg_size): # turn off waiting for long msg
                 self.waiting_long_msg = False
                 self.long_msg_topic = ''
@@ -219,6 +219,7 @@ class MQTTClient:
                 self.waiting_long_msg = True
                 self.long_msg_topic = topic
                 self.long_msg_size = sz
+                self.long_msg_bytes_already_received = self.max_size_msg
                 sz = self.max_size_msg
 
             msg = self.sock.read(sz)
