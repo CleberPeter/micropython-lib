@@ -168,6 +168,22 @@ class MQTTClient:
                     raise MQTTException(resp[3])
                 return
 
+    def unsubscribe(self, topic, qos=0):
+        pkt = bytearray(b"\xA2\0\0\0")
+        self.pid += 1
+        struct.pack_into("!BH", pkt, 1, 1 + 2 + len(topic) + 1, self.pid)
+        #print(hex(len(pkt)), hexlify(pkt, ":"))
+        self.sock.write(pkt)
+        self._send_str(topic)
+        self.sock.write(qos.to_bytes(1, "little"))
+        while 1:
+            op = self.wait_msg()
+            if op == 0xB0:
+                resp = self.sock.read(3)
+                #print(resp)
+                assert resp[1] == pkt[2] 
+                return
+
     def process_long_msg(self):
         self.sock.setblocking(False) # can receive less than <max_size_msg>
         msg = self.sock.read(self.max_size_msg)
