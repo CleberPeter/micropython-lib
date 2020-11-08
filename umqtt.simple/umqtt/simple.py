@@ -196,14 +196,13 @@ class MQTTClient:
                 self.long_msg_topic = ''
                 self.long_msg_bytes_already_received = 0
             
-            self.cb(topic, msg)
+            self.cb(topic, msg, self.long_msg_size)
         
     # Wait for a single incoming MQTT message and process it.
     # Subscribed messages are delivered to a callback previously
     # set by .set_callback() method. Other (internal) MQTT
     # messages processed internally.
     def wait_msg(self):
-
         if not self.waiting_long_msg:
 
             res = self.sock.read(1)
@@ -230,6 +229,8 @@ class MQTTClient:
                 pid = self.sock.read(2)
                 pid = pid[0] << 8 | pid[1]
                 sz -= 2
+                
+            sz_message = sz
             
             if (sz > self.max_size_msg): # turn on waiting for long msg
                 self.waiting_long_msg = True
@@ -247,10 +248,10 @@ class MQTTClient:
             elif op & 6 == 4:
                 assert 0
 
-            self.cb(topic, msg)
+            self.cb(topic, msg, sz_message)
         else:
             self.process_long_msg()
-
+        
     # Checks whether a pending message from server is available.
     # If not, returns immediately with None. Otherwise, does
     # the same processing as wait_msg.
